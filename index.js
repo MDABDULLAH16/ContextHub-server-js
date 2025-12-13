@@ -1,68 +1,207 @@
-import dotenv from 'dotenv';
-dotenv.config();
-import express from 'express';
-import cors from 'cors';
-import { connectDB, closeDB } from './src/config/database.js';
-import userRoutes from './src/routes/userRoutes.js';
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const express = require("express");
+const cors = require("cors");
+require("dotenv").config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const port = process.env.PORT || 3000;
 
-// Middleware
+const admin = require("firebase-admin");
+const serviceAccount = require("./contesthub-1cfb1-firebase-adminsdk.json");
+
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+const uri = process.env.DATABASE_URL;
 
-// Routes
-app.get('/', (req, res) => {
-  res.json({
-    message: 'ContestHub Server',
-    status: 'running',
-    version: '1.0.0',
-  });
+// Create a MongoClient with a MongoClientOptions object to set the Stable API version
+const client = new MongoClient(uri, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
 });
 
- 
-
-// API Routes
-app.use('/api/users', userRoutes);
-
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Route not found',
-  });
+// firebase admin verification
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({
-    success: false,
-    error: 'Internal server error',
-  });
-});
+const verifyFBToken = async (req, res, next) => {
+  const token = req.headers?.authorization;
+  // console.log('token',token);
 
-// Start server
-async function startServer() {
+  if (!token) {
+    res.status(401).send({ message: "Unauthorized access" });
+  }
   try {
-    await connectDB();
-    app.listen(PORT, () => {
-      console.log(`✓ Server running on http://localhost:${PORT}`);
-     
-    });
+    const idToken = token.split(" ")[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    req.decoded_email = decoded.email;
+    next();
   } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+};
+
+app.get("/", (req, res) => {
+  res.send("Welcome to ContestHub!");
+});
+
+async function run() {
+  try {
+    // Connect the client to the server	(optional starting in v4.7)
+    await client.connect();
+
+    //collection;
+    const contestHubDb = client.db("contesthub");
+    const userCollection = contestHubDb.collection("users");
+    const creatorCollection = contestHubDb.collection("creators");
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      // console.log(email);
+
+      const user = await userCollection.findOne({ email });
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
+
+    //user apis
+    app.get("/api/users", async (req, res) => {
+      const users = await userCollection.find({}).toArray();
+      res.send({ success: true, count: users.length, data: users });
+    });
+
+    // Get user by ID
+    app.get("/api/users/:id", async (req, res) => {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id))
+        return res.send({ success: false, error: "Invalid ID" });
+
+      const user = await userCollection.findOne({ _id: new ObjectId(id) });
+      res.send({ success: !!user, data: user || null });
+    });
+    // Create a new user
+    app.post("/users", async (req, res) => {
+      const { email } = req.body;
+      const existingUser = await userCollection.findOne({ email });
+      if (existingUser)
+        return res.send({ success: false, error: "Email exists" });
+
+      const newUser = {
+        ...req.body,
+        role: "user",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const result = await userCollection.insertOne(newUser);
+      res.send(result);
+    });
+    // Update user
+    //  todo patch api
+
+    // Delete user
+    app.delete("/api/users/:id", async (req, res) => {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id))
+        return res.send({ success: false, error: "Invalid ID" });
+
+      const result = await userCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send({ success: result.deletedCount > 0 });
+    });
+
+    // creator apis
+    app.post("/creators", async (req, res) => {
+      const creator = req.body;
+      const result = await creatorCollection.insertOne(creator);
+      res.send(result);
+    });
+    app.get("/creators", verifyFBToken, verifyAdmin, async (req, res) => {
+      const status = req.query.status;
+      let query = {};
+      if (status) {
+        query.status = status;
+      }
+      const creators = await creatorCollection.find(query).toArray();
+      res.send(creators);
+    });
+   app.patch("/creators", verifyFBToken, verifyAdmin, async (req, res) => {
+     const { status } = req.body;
+     const { email } = req.query;
+
+     if (!status || !email) {
+       return res
+         .status(400)
+         .send({ success: false, message: "Status or email missing" });
+     }
+
+     try {
+       // 1️⃣ Update creator application status
+       const creatorRes = await creatorCollection.updateOne(
+         { email },
+         { $set: { status } }
+       );
+
+       // 2️⃣ If accepted → update user role
+       if (status === "accepted") {
+         await userCollection.updateOne(
+           { email },
+           { $set: { role: "creator" } }
+         );
+       }
+
+       res.send({
+         success: true,
+         message: `Creator ${status} successfully`,
+         creatorModified: creatorRes.modifiedCount,
+       });
+     } catch (error) {
+       console.error("Creator update failed:", error);
+       res.status(500).send({ success: false });
+     }
+   });
+
+    //user role update api
+    app.patch(
+      "/users/:id/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const roleInfo = req.body;
+        const query = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            role: roleInfo.role,
+          },
+        };
+        const result = await userCollection.updateOne(query, updateDoc);
+        res.send(result);
+      }
+    );
+
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const result = await userCollection.findOne(query);
+      res.send({ role: result?.role || "user" });
+    });
+
+    // Send a ping to confirm a successful connection
+    await client.db("admin").command({ ping: 1 });
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
+  } finally {
+    // Ensures that the client will close when you finish/error
+    // await client.close();
   }
 }
+run().catch(console.dir);
 
-// // Graceful shutdown
-// process.on('SIGINT', async () => {
-//   console.log('\nShutting down...');
-//   await closeDB();
-//   process.exit(0);
-// });
-
-startServer();
+app.listen(port, () => {
+  console.log(`ContestHub listening on port ${port}`);
+});
