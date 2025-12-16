@@ -57,7 +57,7 @@ async function run() {
     const contestHubDb = client.db("contesthub");
     const userCollection = contestHubDb.collection("users");
     const creatorCollection = contestHubDb.collection("creators");
-    const contestsCollection = contestHubDb.collection('contests');
+    const contestsCollection = contestHubDb.collection("contests");
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded_email;
       // console.log(email);
@@ -124,78 +124,93 @@ async function run() {
 
     // creator apis
 
-    // apply to be a creator 
+    // apply to be a creator
     app.post("/creators", async (req, res) => {
       const creator = req.body;
       const result = await creatorCollection.insertOne(creator);
       res.send(result);
-    }); 
-    //create contest 
-    app.post('/create-contest', async (req, res) => {
-      const contestInfo = req.body;
-      const contest = {
-        ...contestInfo,
-        status: 'pending',
-        createdAt,
-        updatedAt,
+    });
+
+    //get all creators apply
+    app.get("/creators", verifyFBToken, verifyAdmin, async (req, res) => {
+      const status = req.query.status;
+      let query = {};
+      if (status) {
+        query.status = status;
       }
-      const result = await contestsCollection.insertOne(contest);
-      res.send(result);
-    })
-      //get all creators apply
-      app.get("/creators", verifyFBToken, verifyAdmin, async (req, res) => {
-        const status = req.query.status;
-        let query = {};
-        if (status) {
-          query.status = status;
-        }
-        const creators = await creatorCollection.find(query).toArray();
-        res.send(creators);
-      });
- 
-      // creators apply accept /reject;
-      app.patch("/creators", verifyFBToken, verifyAdmin, async (req, res) => {
-        const { status } = req.body;
-        const { email } = req.query;
+      const creators = await creatorCollection.find(query).toArray();
+      res.send(creators);
+    });
 
-        if (!status || !email) {
-          return res
-            .status(400)
-            .send({ success: false, message: "Status or email missing" });
-        }
+    // creators apply accept /reject;
+    app.patch("/creators", verifyFBToken, verifyAdmin, async (req, res) => {
+      const { status } = req.body;
+      const { email } = req.query;
 
-        try {
-          // 1️⃣ Update creator application status
-          const creatorRes = await creatorCollection.updateOne(
+      if (!status || !email) {
+        return res
+          .status(400)
+          .send({ success: false, message: "Status or email missing" });
+      }
+
+      try {
+        // 1️⃣ Update creator application status
+        const creatorRes = await creatorCollection.updateOne(
+          { email },
+          { $set: { status } }
+        );
+
+        // 2️⃣ If accepted → update user role
+        if (status === "accepted") {
+          await userCollection.updateOne(
             { email },
-            { $set: { status } }
+            { $set: { role: "creator" } }
           );
-
-          // 2️⃣ If accepted → update user role
-          if (status === "accepted") {
-            await userCollection.updateOne(
-              { email },
-              { $set: { role: "creator" } }
-            );
-          }
-          if (status === "rejected") {
-            await userCollection.updateOne(
-              { email },
-              { $set: { role: "user" } }
-            );
-          }
-
-          res.send({
-            success: true,
-            message: `Creator ${status} successfully`,
-            creatorModified: creatorRes.modifiedCount,
-          });
-        } catch (error) {
-          console.error("Creator update failed:", error);
-          res.status(500).send({ success: false });
         }
-      });
+        if (status === "rejected") {
+          await userCollection.updateOne({ email }, { $set: { role: "user" } });
+        }
 
+        res.send({
+          success: true,
+          message: `Creator ${status} successfully`,
+          creatorModified: creatorRes.modifiedCount,
+        });
+      } catch (error) {
+        console.error("Creator update failed:", error);
+        res.status(500).send({ success: false });
+      }
+    });
+
+    // contest api  create contest
+    app.post(
+      "/create-contest",
+      verifyFBToken,
+      verifyCreator,
+      async (req, res) => {
+        const contestInfo = req.body;
+        // console.log("info", contestInfo);
+
+        const contest = {
+          ...contestInfo,
+          status: "pending",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        // console.log(contest);
+
+        const result = await contestsCollection.insertOne(contest);
+        res.send(result);
+      }
+    );
+    //get my created contest; for creator
+    app.get('/my-created-contest',verifyFBToken,verifyCreator,  async (req, res) => {
+      const email = req.query.email;
+      console.log(email);
+      
+      const findMyContest = await contestsCollection.find({ creator:email }).toArray();
+      res.send(findMyContest);
+    })
     //user role update api
     app.patch(
       "/users/:id/role",
@@ -214,7 +229,7 @@ async function run() {
         res.send(result);
       }
     );
-//user role retrieved
+    //user role retrieved
     app.get("/users/:email/role", async (req, res) => {
       const email = req.params.email;
       const query = { email };
