@@ -123,7 +123,6 @@ async function run() {
     });
 
     // creator apis
-
     // apply to be a creator
     app.post("/creators", async (req, res) => {
       const creator = req.body;
@@ -131,7 +130,7 @@ async function run() {
       res.send(result);
     });
 
-    //get all creators apply
+    //get all creators apply for admin
     app.get("/creators", verifyFBToken, verifyAdmin, async (req, res) => {
       const status = req.query.status;
       let query = {};
@@ -142,7 +141,7 @@ async function run() {
       res.send(creators);
     });
 
-    // creators apply accept /reject;
+    // creators apply accept /reject; for admin
     app.patch("/creators", verifyFBToken, verifyAdmin, async (req, res) => {
       const { status } = req.body;
       const { email } = req.query;
@@ -203,14 +202,58 @@ async function run() {
         res.send(result);
       }
     );
-    //get my created contest; for creator
-    app.get('/my-created-contest',verifyFBToken,verifyCreator,  async (req, res) => {
-      const email = req.query.email;
-      console.log(email);
-      
-      const findMyContest = await contestsCollection.find({ creator:email }).toArray();
-      res.send(findMyContest);
+    //get apply contest for admin;
+    app.get(
+      "/applied-contest",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const cursor = contestsCollection.find();
+        const result = await cursor.toArray();
+        res.send(result);
+      }
+    );
+    //applied contest status update/reject/accept;
+    app.patch(
+      "/applied-contest/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const status = req.query.status;
+        const query = { _id: new ObjectId(id) };
+        if (!status) {
+          return res.send({ message: "status not found" });
+        }
+
+        const contest = await contestsCollection.updateOne(query, {
+          $set: status,
+        });
+        res.send(contest);
+      }
+    );
+    app.delete('/applied-contest/:id', verifyFBToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await contestsCollection.deleteOne(query);
+      res.send(result)
     })
+    //get my created contest; for creator
+    app.get(
+      "/my-created-contest",
+      verifyFBToken,
+      verifyCreator,
+      async (req, res) => {
+        const email = req.query.email;
+        console.log(email);
+
+        const findMyContest = await contestsCollection
+          .find({ creator: email })
+          .toArray();
+        res.send(findMyContest);
+      }
+    );
+
     //user role update api
     app.patch(
       "/users/:id/role",
