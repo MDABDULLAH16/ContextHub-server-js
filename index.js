@@ -58,6 +58,7 @@ async function run() {
     const userCollection = contestHubDb.collection("users");
     const creatorCollection = contestHubDb.collection("creators");
     const contestsCollection = contestHubDb.collection("contests");
+    const paymentsCollection = contestHubDb.collection("payments");
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded_email;
       // console.log(email);
@@ -165,8 +166,7 @@ async function run() {
             { email },
             { $set: { role: "creator" } }
           );
-        }
-        if (status === "rejected") {
+        } else {
           await userCollection.updateOne({ email }, { $set: { role: "user" } });
         }
 
@@ -227,17 +227,22 @@ async function run() {
         }
 
         const contest = await contestsCollection.updateOne(query, {
-          $set: status,
+          $set: { status: status },
         });
         res.send(contest);
       }
     );
-    app.delete('/applied-contest/:id', verifyFBToken, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await contestsCollection.deleteOne(query);
-      res.send(result)
-    })
+    app.delete(
+      "/applied-contest/:id",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await contestsCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
     //get my created contest; for creator
     app.get(
       "/my-created-contest",
@@ -254,6 +259,53 @@ async function run() {
       }
     );
 
+    //get contest for user;
+    app.get("/contests", async (req, res) => {
+      const status = req.query.status;
+      const query = {};
+      if (status) {
+        query.status = status;
+      }
+      const cursor = await contestsCollection.find(query).toArray();
+      res.send(cursor);
+    });
+    app.get("/contest/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const cursor = await contestsCollection.findOne(query);
+      res.send(cursor);
+    });
+    app.get("/contests-search", async (req, res) => {
+      const searchText = req.query.search;
+      // Create a case-insensitive regex for the search
+      const query = {
+        status: "accepted", // Only show approved contests
+        $or: [
+          { name: { $regex: searchText, $options: "i" } },
+          { contestType: { $regex: searchText, $options: "i" } },
+        ],
+      };
+
+      const results = await contestsCollection.find(query).limit(10).toArray();
+      res.send(results);
+    });
+
+    //payments apis;
+    // Check if user already participated
+    app.get("/payment-check/:id", verifyFBToken, async (req, res) => {
+      const contestId = req.params.id;
+      const email = req.query.email;
+
+      if (!email) return res.status(400).send({ message: "Email required" });
+
+      const query = {
+        contestId: contestId,
+        userEmail: email,
+      };
+
+      const result = await paymentsCollection.findOne(query);
+      res.send({ hasPaid: !!result }); // Returns true if payment exists, false otherwise
+    });
     //user role update api
     app.patch(
       "/users/:id/role",
