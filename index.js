@@ -213,7 +213,7 @@ async function run() {
         res.send(result);
       }
     );
-    //applied contest status update/reject/accept;
+    //applied contest status update/reject/accept for admin;
     app.patch(
       "/applied-contest/:id",
       verifyFBToken,
@@ -258,7 +258,52 @@ async function run() {
         res.send(findMyContest);
       }
     );
-
+    //update my created contest before accepted ;
+    app.patch(
+      "/contest/:id",
+      verifyFBToken,
+      verifyCreator,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const contestInfo = {
+          $set: {
+            ...req.body,
+          },
+        };
+        const result = await contestsCollection.updateOne(query, contestInfo);
+        res.send(result);
+      }
+    );
+    //delete my created contest before accepted ;
+    app.delete(
+      "/contest/:id",
+      verifyFBToken,
+      verifyCreator,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await contestsCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
+    //update my created contest before accepted ;
+    app.patch(
+      "/contest/:id",
+      verifyFBToken,
+      verifyCreator,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const contestInfo = {
+          $set: {
+            ...req.body,
+          },
+        };
+        const result = await contestsCollection.updateOne(query, contestInfo);
+        res.send(result);
+      }
+    );
     //get contest for user;
     app.get("/contests", async (req, res) => {
       const status = req.query.status;
