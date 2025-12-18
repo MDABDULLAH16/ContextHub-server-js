@@ -2,6 +2,8 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
+const MY_DOMAIN = process.env.FRONT_END_URL;
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -59,6 +61,8 @@ async function run() {
     const creatorCollection = contestHubDb.collection("creators");
     const contestsCollection = contestHubDb.collection("contests");
     const paymentsCollection = contestHubDb.collection("payments");
+    const participantCollection = contestHubDb.collection("participants");
+
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded_email;
       // console.log(email);
@@ -336,6 +340,151 @@ async function run() {
     });
 
     //payments apis;
+
+    //create check out session;
+    // Payment Route
+    app.post("/create-checkout-session", async (req, res) => {
+      const { contestId, user } = req.body;
+
+      // 1. Validation
+      if (!contestId || typeof contestId !== "string") {
+        return res
+          .status(400)
+          .send({ message: "Invalid or missing Contest ID" });
+      }
+
+      try {
+        // 2. Fetch verified data from DB
+        const query = { _id: new ObjectId(contestId) };
+        const contest = await contestsCollection.findOne(query);
+
+        if (!contest) {
+          return res.status(404).send({ message: "Contest not found" });
+        }
+
+        // 3. Define the domain (Ensure http/https is included)
+        const client_domain = process.env.MY_DOMAIN || "http://localhost:5173";
+
+        // 4. Create Session
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          customer_email: user?.email,
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: {
+                  name: contest.name,
+                  description: `Entry fee for ${contest.name}`,
+                },
+                unit_amount: Math.round(parseFloat(contest.entryPrice) * 100),
+              },
+              quantity: 1,
+            },
+          ],
+          metadata: {
+            contestId: contestId,
+            userEmail: user?.email,
+            userName: user?.displayName,
+          },
+          // THE FIX: Use {CHECKOUT_SESSION_ID} exactly as a literal string.
+          // Stripe replaces this on their end after the object is created.
+          success_url: `${client_domain}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${client_domain}/payment-cancelled`,
+        });
+
+        // 5. Send back to your React component
+        res.send({ id: session.id, url: session.url });
+      } catch (error) {
+        console.error("Stripe Error:", error.message);
+        res.status(500).send({ error: error.message });
+      }
+    });
+    app.patch("/payment-success", async (req, res) => {
+      const sessionId = req.query.session_id;
+      console.log("sessionisd", sessionId);
+
+      try {
+        // 1. Retrieve the session from Stripe
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        // console.log("after success", session);
+
+        // session.payment_intent is the unique Transaction ID
+        const transactionId = session.payment_intent;
+        // console.log('trans',transactionId);
+        
+        const duplicate = await participantCollection.findOne({
+          transactionId,
+        });
+        if (duplicate) {
+          return res.send({ message: "Already processed", success: true });
+        }
+        // 2. Check if this payment was already processed
+        const existPayment = await participantCollection.findOne({
+          transactionId,
+        });
+        if (existPayment) {
+          return res.send({
+            message: "Payment already processed!",
+            transactionId,
+          });
+        }
+
+        // 3. Verify the status is 'paid'
+        if (session.payment_status === "paid") {
+          const { contestId, userEmail, userName } = session.metadata;
+
+          // 4. Update Contest (Increment Participants)
+          const contestQuery = { _id: new ObjectId(contestId) };
+          await contestsCollection.updateOne(contestQuery, {
+            $inc: { participantCount: 1 },
+          });
+          // 5. Record the Participation
+          // Note: use values from session.metadata and session.amount_total
+          const participationInfo = {
+            contestId: new ObjectId(contestId),
+            userEmail: userEmail,
+            userName: userName,
+            transactionId: transactionId,
+            paidAmount: session.amount_total / 100, // Convert cents to USD/BDT
+            paymentDate: new Date(),
+            taskSubmissionStatus: "pending",
+            task: "",
+            gradingStatus: "not_graded",
+          };
+
+          const result = await participantCollection.insertOne(
+            participationInfo
+          );
+          const creatorInfo = await contestsCollection.findOne(contestQuery);
+          const creatorEmail = creatorInfo?.creator;
+          const amountToCredit = session.amount_total / 100; // The entry fee paid
+
+          //update balance on creator account;
+          if (creatorEmail) {
+            const creatorBalance = await userCollection.updateOne(
+              { email: creatorEmail },
+              { $inc: { balance: amountToCredit } }
+            );
+          }
+
+          // 6. Send success response
+          res.send({
+            success: true,
+            message: "Participation confirmed!",
+            transactionId,
+          });
+        } else {
+          res.status(400).send({ message: "Payment not verified" });
+        }
+      } catch (error) {
+        console.error("Payment Success Error:", error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
     // Check if user already participated
     app.get("/payment-check/:id", verifyFBToken, async (req, res) => {
       const contestId = req.params.id;
@@ -351,6 +500,7 @@ async function run() {
       const result = await paymentsCollection.findOne(query);
       res.send({ hasPaid: !!result }); // Returns true if payment exists, false otherwise
     });
+
     //user role update api
     app.patch(
       "/users/:id/role",
