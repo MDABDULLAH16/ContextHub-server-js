@@ -185,7 +185,7 @@ async function run() {
       }
     });
 
-    // contest api  create contest
+    // contest api create contest
     app.post(
       "/create-contest",
       verifyFBToken,
@@ -206,6 +206,67 @@ async function run() {
         res.send(result);
       }
     );
+    //get all participants for creator to see;
+    app.get('/all-participants', verifyFBToken, verifyCreator, async (req, res) => {
+      const email = req.query.email;  
+      const query = { creator: email };
+      const result = await participantCollection.find(query).toArray();
+      res.send(result);
+    });
+    // 1. Get all participants for a specific contest
+    app.get("/contest-participants/:id", async (req, res) => {
+      const contestId = req.params.id;
+      const query = { contestId:  contestId };
+      const result = await participantCollection.find(query).toArray();
+      res.send(result);
+    });
+    // 2. Update the grading status
+    app.patch("/grade-participant/:id", async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body; // status will be 'winner', 'rejected', etc.
+
+      try {
+        // 1. Get the participant's current info to find their contestId
+        const participant = await participantCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!participant)
+          return res.status(404).send({ message: "Participant not found" });
+
+        const contestId = participant.contestId;
+
+        if (!contestId) {
+          return res.send({ message: "contest NOt found" });
+        }
+
+        // 2. If the creator is trying to set a "winner"
+        if (status === "winner") {
+          // Check if this contest already has a winner
+          const existingWinner = await participantCollection.findOne({
+            contestId: new ObjectId(contestId),
+            gradingStatus: "winner",
+          });
+
+          if (existingWinner) {
+            return res.status(400).send({
+              message:
+                "This contest already has a winner. Remove the current winner first.",
+            });
+          }
+        }
+
+        // 3. Update the status
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: { gradingStatus: status },
+        };
+
+        const result = await participantCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
     //get apply contest for admin;
     app.get(
       "/applied-contest",
@@ -414,7 +475,7 @@ async function run() {
         // session.payment_intent is the unique Transaction ID
         const transactionId = session.payment_intent;
         // console.log('trans',transactionId);
-        
+
         const duplicate = await participantCollection.findOne({
           transactionId,
         });
@@ -441,10 +502,13 @@ async function run() {
           await contestsCollection.updateOne(contestQuery, {
             $inc: { participantCount: 1 },
           });
+          const creatorInfo = await contestsCollection.findOne(contestQuery);
           // 5. Record the Participation
           // Note: use values from session.metadata and session.amount_total
           const participationInfo = {
-            contestId: new ObjectId(contestId),
+            contestId: contestId,
+            contestName: creatorInfo?.name,
+            creator: creatorInfo?.creator,
             userEmail: userEmail,
             userName: userName,
             transactionId: transactionId,
@@ -458,7 +522,7 @@ async function run() {
           const result = await participantCollection.insertOne(
             participationInfo
           );
-          const creatorInfo = await contestsCollection.findOne(contestQuery);
+          //update creator balance
           const creatorEmail = creatorInfo?.creator;
           const amountToCredit = session.amount_total / 100; // The entry fee paid
 
@@ -475,6 +539,9 @@ async function run() {
             success: true,
             message: "Participation confirmed!",
             transactionId,
+            amount_total: session.amount_total,
+            participationId: result.insertedId,
+            contestId: contestId,
           });
         } else {
           res.status(400).send({ message: "Payment not verified" });
