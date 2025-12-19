@@ -199,6 +199,7 @@ async function run() {
           status: "pending",
           createdAt: new Date(),
           updatedAt: new Date(),
+          participantCount: 0,
         };
         // console.log(contest);
 
@@ -207,16 +208,21 @@ async function run() {
       }
     );
     //get all participants for creator to see;
-    app.get('/all-participants', verifyFBToken, verifyCreator, async (req, res) => {
-      const email = req.query.email;  
-      const query = { creator: email };
-      const result = await participantCollection.find(query).toArray();
-      res.send(result);
-    });
+    app.get(
+      "/all-participants",
+      verifyFBToken,
+      verifyCreator,
+      async (req, res) => {
+        const email = req.query.email;
+        const query = { creator: email };
+        const result = await participantCollection.find(query).toArray();
+        res.send(result);
+      }
+    );
     // 1. Get all participants for a specific contest
     app.get("/contest-participants/:id", async (req, res) => {
       const contestId = req.params.id;
-      const query = { contestId:  contestId };
+      const query = { contestId: contestId };
       const result = await participantCollection.find(query).toArray();
       res.send(result);
     });
@@ -258,13 +264,30 @@ async function run() {
         // 3. Update the status
         const filter = { _id: new ObjectId(id) };
         const updateDoc = {
-          $set: { gradingStatus: status },
+          $set: { gradingStatus: status, updatedAt: new Date() },
         };
 
         const result = await participantCollection.updateOne(filter, updateDoc);
         res.send(result);
       } catch (error) {
         res.status(500).send({ message: error.message });
+      }
+    });
+    //get recent winner for a contest for user;
+    app.get("/winner", async (req, res) => {
+      try {
+        const query = { gradingStatus: "Winner" };
+
+        const result = await participantCollection
+          .find(query)
+          .sort({ updatedAt: -1 })
+          .limit(3) // Optional: Only fetch top 6 for the homepage
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        console.error("Error fetching winners:", error);
+        res.status(500).send({ message: "Failed to fetch winners" });
       }
     });
     //get apply contest for admin;
@@ -448,6 +471,7 @@ async function run() {
             contestId: contestId,
             userEmail: user?.email,
             userName: user?.displayName,
+            userImage: user?.photoURL,
           },
           // THE FIX: Use {CHECKOUT_SESSION_ID} exactly as a literal string.
           // Stripe replaces this on their end after the object is created.
@@ -495,7 +519,8 @@ async function run() {
 
         // 3. Verify the status is 'paid'
         if (session.payment_status === "paid") {
-          const { contestId, userEmail, userName } = session.metadata;
+          const { contestId, userEmail, userName, userImage } =
+            session.metadata;
 
           // 4. Update Contest (Increment Participants)
           const contestQuery = { _id: new ObjectId(contestId) };
@@ -511,6 +536,8 @@ async function run() {
             creator: creatorInfo?.creator,
             userEmail: userEmail,
             userName: userName,
+            userImage: userImage,
+            prizeMoney: creatorInfo?.prizeMoney || 0,
             transactionId: transactionId,
             paidAmount: session.amount_total / 100, // Convert cents to USD/BDT
             paymentDate: new Date(),
