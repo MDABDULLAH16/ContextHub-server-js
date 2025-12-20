@@ -689,6 +689,24 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+    app.get("/users/:email", verifyFBToken, async (req, res) => {
+      const email = req.params.email;
+      const cursor = await userCollection.findOne({ email });
+      res.send(cursor);
+    });
+    app.patch("/users/:email", verifyFBToken, async (req, res) => {
+      const email = req.params.email;
+      const updateInfo = req.body;
+      const filter = { email: email };
+      const updateDoc = {
+        $set: {
+          ...updateInfo,
+
+        },
+      };
+      const cursor = await userCollection.updateOne(filter, updateDoc);
+      res.send(cursor);
+    });
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
