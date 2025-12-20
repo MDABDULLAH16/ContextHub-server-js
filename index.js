@@ -598,8 +598,7 @@ async function run() {
     app.patch("/submit-task/:id", async (req, res) => {
       const contestId = req.params.id;
       const { userEmail, task, taskSubmissionStatus } = req.body;
-      console.log(userEmail,task,taskSubmissionStatus);
-      
+      console.log(userEmail, task, taskSubmissionStatus);
 
       const filter = {
         contestId: contestId,
@@ -608,7 +607,7 @@ async function run() {
 
       const updateDoc = {
         $set: {
-          task: task,  
+          task: task,
           taskSubmissionStatus: taskSubmissionStatus,
           submittedAt: new Date(), // Useful for checking if they met the deadline
         },
@@ -621,33 +620,63 @@ async function run() {
         res.status(500).send({ message: "Internal Server Error" });
       }
     });
+    app.get("/leaderboard", async (req, res) => {
+      try {
+        const leaderboard = await participantCollection
+          .aggregate([
+            { $match: { gradingStatus: "Winner" } },
+            {
+              $group: {
+                _id: "$userEmail",
+                totalPaid: { $sum: "$paidAmount" },
+                userName: { $first: "$userName" },
+                userImage: { $first: "$userImage" },
+                winnerCount: { $sum: 1 },
+              },
+            },
+            // Secondary sort: if winnerCount is equal, sort by totalPaid
+            { $sort: { winnerCount: -1, totalPaid: -1 } },
+            { $limit: 10 },
+          ])
+          .toArray();
+
+        res.send(leaderboard);
+      } catch (error) {
+        res.status(500).send({ error: "Failed to fetch leaderboard" });
+      }
+    });
     //user role update api
- app.patch("/users/:id/role", verifyFBToken, verifyAdmin, async (req, res) => {
-   const targetId = req.params.id; // The ID of the user to be changed
-   const roleInfo = req.body;
-   const adminEmail = req.decoded_email; // Get email from the verified token
+    app.patch(
+      "/users/:id/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const targetId = req.params.id; // The ID of the user to be changed
+        const roleInfo = req.body;
+        const adminEmail = req.decoded_email; // Get email from the verified token
 
-   // 1. Find the admin who is making the request
-   const adminUser = await userCollection.findOne({ email: adminEmail });
+        // 1. Find the admin who is making the request
+        const adminUser = await userCollection.findOne({ email: adminEmail });
 
-   // 2. Check if the admin is trying to update their own ID
-   if (adminUser._id.toString() === targetId) {
-     return res.status(403).send({
-       success: false,
-       message: "Action Forbidden: You cannot change your own role.",
-     });
-   }
+        // 2. Check if the admin is trying to update their own ID
+        if (adminUser._id.toString() === targetId) {
+          return res.status(403).send({
+            success: false,
+            message: "Action Forbidden: You cannot change your own role.",
+          });
+        }
 
-   const query = { _id: new ObjectId(targetId) };
-   const updateDoc = {
-     $set: {
-       role: roleInfo.role,
-     },
-   };
+        const query = { _id: new ObjectId(targetId) };
+        const updateDoc = {
+          $set: {
+            role: roleInfo.role,
+          },
+        };
 
-   const result = await userCollection.updateOne(query, updateDoc);
-   res.send(result);
- });
+        const result = await userCollection.updateOne(query, updateDoc);
+        res.send(result);
+      }
+    );
     //user role retrieved
     app.get("/users/:email/role", async (req, res) => {
       const email = req.params.email;
@@ -655,12 +684,11 @@ async function run() {
       const result = await userCollection.findOne(query);
       res.send({ role: result?.role || "user" });
     });
-    app.get('/users',verifyFBToken,verifyAdmin, async (req, res) => { 
+    app.get("/users", verifyFBToken, verifyAdmin, async (req, res) => {
       const cursor = userCollection.find();
       const result = await cursor.toArray();
-      res.send(result); 
-    }
-    );
+      res.send(result);
+    });
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
