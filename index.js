@@ -53,7 +53,7 @@ app.get("/", (req, res) => {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     //collection;
     const contestHubDb = client.db("contesthub");
@@ -260,6 +260,19 @@ async function run() {
             });
           }
         }
+        const contest = await contestsCollection.findOne({
+          _id: new ObjectId(contestId),
+        });
+        if (!contest) {
+          return res.send({ message: "contest not found" });
+        }
+        if (contest) {
+          //update contest winner info
+        const updateUserBalance = await userCollection.updateOne(
+          { email: participant.userEmail },
+          { $inc: { balance: contest.prizeMoney || 0 } }
+        );
+        } 
 
         // 3. Update the status
         const filter = { _id: new ObjectId(id) };
@@ -290,6 +303,7 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch winners" });
       }
     });
+    //admin apis
     //get apply contest for admin;
     app.get(
       "/applied-contest",
@@ -331,6 +345,28 @@ async function run() {
         res.send(result);
       }
     );
+    //get all participants for admin to see;
+    app.get(
+      "/all-participants-admin",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const cursor = participantCollection.find();
+        const result = await cursor.toArray();
+        res.send(result);
+      }
+    );
+    //get all contests for admin to see;
+    app.get(
+      "/all-contests-admin",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const cursor = contestsCollection.find();
+        const result = await cursor.toArray();
+        res.send(result);
+      }
+    );  
     //get my created contest; for creator
     app.get(
       "/my-created-contest",
@@ -424,7 +460,6 @@ async function run() {
     });
 
     //user dashboard apis;
-
     app.get("/my-entries-contests", verifyFBToken, async (req, res) => {
       const email = req.query.email;
       const query = { userEmail: email };
@@ -462,7 +497,8 @@ async function run() {
         }
 
         // 3. Define the domain (Ensure http/https is included)
-        const client_domain = process.env.MY_DOMAIN || "http://localhost:5173";
+        const client_domain =
+          process.env.FRONT_END_URL || "http://localhost:5173";
 
         // 4. Create Session
         const session = await stripe.checkout.sessions.create({
@@ -726,10 +762,10 @@ async function run() {
       res.send(cursor);
     });
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
