@@ -246,11 +246,11 @@ async function run() {
         }
 
         // 2. If the creator is trying to set a "winner"
-        if (status === "winner") {
+        if (status === "Winner") {
           // Check if this contest already has a winner
           const existingWinner = await participantCollection.findOne({
-            contestId: new ObjectId(contestId),
-            gradingStatus: "winner",
+            contestId: contestId,
+            gradingStatus: "Winner",
           });
 
           if (existingWinner) {
@@ -423,6 +423,14 @@ async function run() {
       res.send(results);
     });
 
+    //user dashboard apis;
+
+    app.get("/my-entries-contests", verifyFBToken, async (req, res) => {
+      const email = req.query.email;
+      const query = { userEmail: email };
+      const result = await participantCollection.find(query).toArray();
+      res.send(result);
+    });
     //payments apis;
 
     //create check out session;
@@ -537,6 +545,10 @@ async function run() {
             userEmail: userEmail,
             userName: userName,
             userImage: userImage,
+
+            endDate: creatorInfo?.endDate,
+            startDate: creatorInfo?.startDate,
+            contestImage: creatorInfo?.image,
             prizeMoney: creatorInfo?.prizeMoney || 0,
             transactionId: transactionId,
             paidAmount: session.amount_total / 100, // Convert cents to USD/BDT
@@ -701,7 +713,6 @@ async function run() {
       const updateDoc = {
         $set: {
           ...updateInfo,
-
         },
       };
       const cursor = await userCollection.updateOne(filter, updateDoc);
