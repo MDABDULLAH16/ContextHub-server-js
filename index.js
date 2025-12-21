@@ -431,6 +431,13 @@ async function run() {
       const result = await participantCollection.find(query).toArray();
       res.send(result);
     });
+
+    app.get('/my-winning-contests', verifyFBToken, async (req, res) => {
+      const email = req.query.email;
+      const query = { userEmail: email, gradingStatus: 'Winner' };
+      const result = await participantCollection.find(query).toArray();
+      res.send(result);
+    });
     //payments apis;
 
     //create check out session;
@@ -545,7 +552,7 @@ async function run() {
             userEmail: userEmail,
             userName: userName,
             userImage: userImage,
-
+            paymentStatus: session.payment_status,
             endDate: creatorInfo?.endDate,
             startDate: creatorInfo?.startDate,
             contestImage: creatorInfo?.image,
